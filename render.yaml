@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: dpi-dashboard
+    env: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 3000

@@ -356,19 +356,22 @@ public:
     struct Config {
         int num_lbs = 2;
         int fps_per_lb = 2;
+        bool json_output = false;
     };
     
     DPIEngine(const Config& cfg) : config_(cfg) {
         int total_fps = cfg.num_lbs * cfg.fps_per_lb;
         
-        std::cout << "\n";
-        std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
-        std::cout << "║              DPI ENGINE v2.0 (Multi-threaded)                 ║\n";
-        std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
-        std::cout << "║ Load Balancers: " << std::setw(2) << cfg.num_lbs 
-                  << "    FPs per LB: " << std::setw(2) << cfg.fps_per_lb
-                  << "    Total FPs: " << std::setw(2) << total_fps << "     ║\n";
-        std::cout << "╚══════════════════════════════════════════════════════════════╝\n\n";
+        if (!config_.json_output) {
+            std::cout << "\n";
+            std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
+            std::cout << "║              DPI ENGINE v2.0 (Multi-threaded)                 ║\n";
+            std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
+            std::cout << "║ Load Balancers: " << std::setw(2) << cfg.num_lbs 
+                      << "    FPs per LB: " << std::setw(2) << cfg.fps_per_lb
+                      << "    Total FPs: " << std::setw(2) << total_fps << "     ║\n";
+            std::cout << "╚══════════════════════════════════════════════════════════════╝\n\n";
+        }
         
         // Create FP threads
         for (int i = 0; i < total_fps; i++) {
@@ -429,7 +432,7 @@ public:
         });
         
         // Read and dispatch packets
-        std::cout << "[Reader] Processing packets...\n";
+        if (!config_.json_output) std::cout << "[Reader] Processing packets...\n";
         RawPacket raw;
         ParsedPacket parsed;
         uint32_t pkt_id = 0;
@@ -495,7 +498,7 @@ public:
             lbs_[lb_idx]->queue().push(std::move(pkt));
         }
         
-        std::cout << "[Reader] Done reading " << pkt_id << " packets\n";
+        if (!config_.json_output) std::cout << "[Reader] Done reading " << pkt_id << " packets\n";
         reader.close();
         
         // Wait for queues to drain
@@ -526,6 +529,37 @@ private:
     std::vector<std::unique_ptr<LoadBalancer>> lbs_;
     
     void printReport() {
+        if (config_.json_output) {
+            std::lock_guard<std::mutex> lock(stats_.app_mutex);
+            std::cout << "{\n";
+            std::cout << "  \"total_packets\": " << stats_.total_packets.load() << ",\n";
+            std::cout << "  \"total_bytes\": " << stats_.total_bytes.load() << ",\n";
+            std::cout << "  \"tcp_packets\": " << stats_.tcp_packets.load() << ",\n";
+            std::cout << "  \"udp_packets\": " << stats_.udp_packets.load() << ",\n";
+            std::cout << "  \"forwarded\": " << stats_.forwarded.load() << ",\n";
+            std::cout << "  \"dropped\": " << stats_.dropped.load() << ",\n";
+            
+            std::cout << "  \"apps\": {\n";
+            bool first_app = true;
+            for (const auto& [app, count] : stats_.app_counts) {
+                if (!first_app) std::cout << ",\n";
+                std::cout << "    \"" << appTypeToString(app) << "\": " << count;
+                first_app = false;
+            }
+            std::cout << "\n  },\n";
+            
+            std::cout << "  \"snis\": {\n";
+            bool first_sni = true;
+            for (const auto& [sni, app] : stats_.detected_snis) {
+                if (!first_sni) std::cout << ",\n";
+                std::cout << "    \"" << sni << "\": \"" << appTypeToString(app) << "\"";
+                first_sni = false;
+            }
+            std::cout << "\n  }\n";
+            std::cout << "}\n";
+            return;
+        }
+
         std::cout << "\n";
         std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
         std::cout << "║                      PROCESSING REPORT                        ║\n";
@@ -600,6 +634,7 @@ Options:
   --block-domain <dom>   Block domain (substring match)
   --lbs <n>              Number of load balancer threads (default: 2)
   --fps <n>              FP threads per LB (default: 2)
+  --json                 Output results as JSON
 
 Example:
   )" << prog << R"( capture.pcap filtered.pcap --block-app YouTube --block-ip 192.168.1.50
@@ -625,6 +660,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--block-domain" && i + 1 < argc) block_domains.push_back(argv[++i]);
         else if (arg == "--lbs" && i + 1 < argc) cfg.num_lbs = std::stoi(argv[++i]);
         else if (arg == "--fps" && i + 1 < argc) cfg.fps_per_lb = std::stoi(argv[++i]);
+        else if (arg == "--json") cfg.json_output = true;
     }
     
     DPIEngine engine(cfg);
@@ -637,6 +673,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    std::cout << "\nOutput written to: " << output << "\n";
+    if (!cfg.json_output) {
+        std::cout << "\nOutput written to: " << output << "\n";
+    }
     return 0;
 }
